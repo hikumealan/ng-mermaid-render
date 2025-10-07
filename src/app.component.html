@@ -1,86 +1,178 @@
-<main class="min-h-screen bg-gray-900 text-gray-200 font-sans p-4 sm:p-6 md:p-8">
-  <div class="max-w-7xl mx-auto">
-    
-    <header class="text-center mb-8">
-      <h1 class="text-4xl sm:text-5xl font-bold text-white mb-2">MermaidJS Diagram Previewer</h1>
-      <p class="text-lg text-cyan-400">Instantly visualize your Mermaid diagrams with this live editor.</p>
-    </header>
+<main class="h-screen bg-gray-900 text-gray-200 font-sans flex flex-col">
+  
+  <style>
+    .editor-line-highlight {
+      background-color: rgba(0, 180, 255, 0.2);
+      transition: background-color 0.3s ease-out;
+    }
+    .prose-invert a { color: #38bdf8; }
+    .prose-invert code { color: #f0f0f0; background-color: rgba(255,255,255,0.1); padding: 0.1em 0.3em; border-radius: 4px; }
+  </style>
 
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+  <!-- Header -->
+  <header class="text-center p-4 border-b border-gray-700/50 shadow-lg z-20">
+    <h1 class="text-2xl font-bold text-white">MermaidJS AI Diagram Studio</h1>
+    <div class="flex items-center justify-center gap-4 mt-2">
+      <select 
+        (change)="loadExample($event)" 
+        class="bg-gray-700 border border-gray-600 text-gray-200 text-xs rounded-md focus:ring-cyan-500 focus:border-cyan-500 block p-1.5">
+        <option value="" disabled selected>-- Load Example --</option>
+        @for (example of diagramExamples; track example.name) {
+          <option [value]="example.code">{{ example.name }}</option>
+        }
+      </select>
       
-      <!-- Editor Column -->
-      <div class="flex flex-col">
-        <label for="mermaid-editor" class="text-xl font-semibold mb-3 text-white">Diagram Code</label>
-        <div class="flex-grow rounded-lg shadow-2xl bg-gray-800 border border-gray-700 overflow-hidden flex focus-within:ring-2 focus-within:ring-cyan-500 focus-within:border-cyan-500/80 transition-all duration-200">
-          
-          <!-- Line Gutter -->
-          <div 
-            #lineNumbers 
-            class="p-4 bg-gray-900/30 text-right text-gray-500 font-mono text-sm leading-relaxed select-none border-r border-gray-700/50 overflow-y-hidden"
-            aria-hidden="true"
-          >
-            @for (line of lines(); track $index) {
-              <div 
-                class="relative px-1 -mx-1 transition-colors duration-200"
-                [class.text-red-300]="errorLine() === $index + 1"
-                [class.font-bold]="errorLine() === $index + 1"
-              >
-                @if(errorLine() === $index + 1) {
-                  <div class="absolute inset-0 bg-red-500/20"></div>
-                }
-                <span class="relative z-10">{{ $index + 1 }}</span>
-              </div>
-            }
-          </div>
+      <select 
+        [value]="mermaidTheme()"
+        (change)="changeTheme($event)" 
+        class="bg-gray-700 border border-gray-600 text-gray-200 text-xs rounded-md focus:ring-cyan-500 focus:border-cyan-500 block p-1.5">
+        <option value="" disabled>-- Select Theme --</option>
+        @for (theme of mermaidThemes; track theme) {
+          <option [value]="theme">{{ theme.charAt(0).toUpperCase() + theme.slice(1) }}</option>
+        }
+      </select>
 
-          <!-- Textarea -->
-          <textarea 
-            #editor
-            id="mermaid-editor"
-            class="flex-1 w-full h-full min-h-[400px] lg:min-h-[600px] p-4 bg-transparent text-gray-300 focus:outline-none resize-none font-mono text-sm leading-relaxed"
-            [value]="mermaidCode()"
-            (input)="updateCode($event)"
-            (scroll)="onEditorScroll()"
-            placeholder="Enter your Mermaid diagram code here... e.g., graph TD; A-->B;"
-            spellcheck="false"
-            autocomplete="off"
-            autocorrect="off"
-            autocapitalize="off"
-          ></textarea>
+       <button 
+        (click)="openAiModal('generate')"
+        title="Generate Diagram with AI" 
+        class="flex items-center gap-2 px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white rounded-md transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-cyan-500">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M5 2a1 1 0 00-1 1v1.586l-2.293 2.293a1 1 0 000 1.414l2.293 2.293V13a1 1 0 102 0v-1.586l2.293-2.293a1 1 0 000-1.414L6 5.414V4a1 1 0 00-1-1zm10 0a1 1 0 00-1 1v1.586l-2.293 2.293a1 1 0 000 1.414l2.293 2.293V13a1 1 0 102 0v-1.586l2.293-2.293a1 1 0 000-1.414L16 5.414V4a1 1 0 00-1-1zm-3.828 7.379a1 1 0 00-1.414 0L8.05 11.086a1 1 0 000 1.414l1.707 1.707a1 1 0 001.414-1.414L9.464 11.793l1.707-1.707a1 1 0 000-1.414z" clip-rule="evenodd" /></svg>
+        <span class="text-xs font-semibold">Generate with AI</span>
+      </button>
+
+      <button 
+        (click)="openCommandPalette()"
+        title="Open Command Palette (Ctrl+Shift+P)" 
+        class="flex items-center gap-2 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-white rounded-md transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-gray-500">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M3 5a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM3 10a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM3 15a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" clip-rule="evenodd" /></svg>
+        <span class="text-xs font-semibold">Commands</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Content Area (Resizable Panes) -->
+  <div class="flex-grow flex w-full relative">
+    
+    <!-- Editor Pane -->
+    <div class="h-full flex flex-col" [style.width.%]="editorWidth()">
+      <div class="flex justify-between items-center p-2 bg-gray-800 border-b border-gray-700">
+        <h2 class="text-sm font-semibold text-white">Diagram Code</h2>
+        <div class="flex items-center gap-1">
+          <!-- AI Actions -->
+          <button (click)="openAiModal('refine')" title="Refine Code with AI" class="text-xs flex items-center gap-1.5 px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded transition-colors disabled:opacity-50" [disabled]="!mermaidCode().trim()"><svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" /></svg>Refine</button>
+          <button (click)="openAiModal('explain')" title="Explain Code with AI" class="text-xs flex items-center gap-1.5 px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded transition-colors disabled:opacity-50" [disabled]="!mermaidCode().trim()"><svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" /></svg>Explain</button>
+          <button (click)="fixCodeWithAi()" title="Fix Code with AI" class="text-xs flex items-center gap-1.5 px-2 py-1 bg-red-800/80 hover:bg-red-700 rounded transition-colors disabled:opacity-50" [disabled]="!errorMessage().trim()"><svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clip-rule="evenodd" /></svg>Fix</button>
+          <div class="w-px h-4 bg-gray-600 mx-1"></div>
+          <!-- Standard Actions -->
+          <button (click)="undo()" title="Undo" class="p-1.5 bg-gray-700 hover:bg-cyan-600 rounded transition-colors disabled:opacity-50" [disabled]="!canUndo()"><svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M11 15l-3-3m0 0l3-3m-3 3h8M3 12a9 9 0 1118 0 9 9 0 01-18 0z" /></svg></button>
+          <button (click)="redo()" title="Redo" class="p-1.5 bg-gray-700 hover:bg-cyan-600 rounded transition-colors disabled:opacity-50" [disabled]="!canRedo()"><svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13 9l3 3m0 0l-3 3m3-3H8m13 0a9 9 0 11-18 0 9 9 0 0118 0z" /></svg></button>
+          <button (click)="formatCode()" title="Format Code" class="p-1.5 bg-gray-700 hover:bg-cyan-600 rounded transition-colors"><svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path d="M17.414 2.586a2 2 0 00-2.828 0L7 10.172V13h2.828l7.586-7.586a2 2 0 000-2.828z" /><path fill-rule="evenodd" d="M2 6a2 2 0 012-2h4a1 1 0 010 2H4v10h10v-4a1 1 0 112 0v4a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" clip-rule="evenodd" /></svg></button>
         </div>
       </div>
-      
-      <!-- Preview Column -->
-      <div class="flex flex-col">
-        <h2 class="text-xl font-semibold mb-3 text-white">Live Preview</h2>
-        <div class="flex-grow flex items-center justify-center p-4 rounded-lg shadow-2xl bg-gray-800 border border-gray-700 min-h-[400px] lg:min-h-[600px] overflow-auto">
-          
-          @if (isLoading()) {
-            <div class="flex flex-col items-center justify-center text-gray-400">
-              <svg class="animate-spin h-8 w-8 text-cyan-400 mb-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-              </svg>
-              <span>Rendering Diagram...</span>
-            </div>
-          } @else if (errorMessage()) {
-            <div class="text-left text-red-400 bg-red-900/40 p-6 rounded-lg border border-red-700/50 max-w-full w-full self-start">
-              <h3 class="font-bold text-lg mb-2 text-red-300">Render Error</h3>
-              <p class="font-mono text-sm whitespace-pre-wrap">{{ errorMessage() }}</p>
-            </div>
-          } @else {
-            <div class="w-full h-full flex items-center justify-center p-2" [innerHTML]="renderedSvg()">
+      <div #editorContainer class="flex-grow w-full h-full overflow-hidden"></div>
+    </div>
+
+    <!-- Divider -->
+    <div 
+      class="w-2 h-full cursor-col-resize bg-gray-700 hover:bg-cyan-500 transition-colors absolute z-10"
+      [style.left.%]="editorWidth()"
+      (mousedown)="startResize($event)"
+      [class.bg-cyan-500]="isResizing()"
+    ></div>
+
+    <!-- Preview Pane -->
+    <div class="h-full flex flex-col" [style.width.%]="100 - editorWidth()">
+       <div class="flex justify-between items-center p-2 bg-gray-800 border-b border-gray-700">
+        <h2 class="text-sm font-semibold text-white">Live Preview</h2>
+        <div class="flex items-center gap-1">
+            <!-- Zoom/Pan Controls -->
+            <button (click)="zoomIn()" title="Zoom In" class="p-1.5 bg-gray-700 hover:bg-gray-600 rounded transition-colors"><svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clip-rule="evenodd" /></svg></button>
+            <button (click)="zoomOut()" title="Zoom Out" class="p-1.5 bg-gray-700 hover:bg-gray-600 rounded transition-colors"><svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M3 10a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" clip-rule="evenodd" /></svg></button>
+            <button (click)="resetZoom()" title="Reset Zoom" class="p-1.5 bg-gray-700 hover:bg-gray-600 rounded transition-colors"><svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4 2a2 2 0 00-2 2v12a2 2 0 002 2h12a2 2 0 002-2V4a2 2 0 00-2-2H4zm10.5 10.5a1 1 0 000-1.414L13.414 10l1.086-1.086a1 1 0 00-1.414-1.414L12 8.586l-1.086-1.086a1 1 0 00-1.414 1.414L10.586 10l-1.086 1.086a1 1 0 001.414 1.414L12 11.414l1.086 1.086a1 1 0 001.414 0z" clip-rule="evenodd" /></svg></button>
+            <div class="w-px h-4 bg-gray-600 mx-1"></div>
+            <!-- Export Controls -->
+            <button (click)="exportSvg()" title="Export as SVG" class="text-xs flex items-center gap-1.5 px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded transition-colors">SVG</button>
+            <button (click)="exportPng()" title="Export as PNG" class="text-xs flex items-center gap-1.5 px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded transition-colors">PNG</button>
+        </div>
+      </div>
+      <div class="flex-grow w-full h-full bg-gray-800/50 overflow-hidden" (mousedown)="startPan($event)">
+        @if (isLoading()) {
+          <div class="flex h-full items-center justify-center text-gray-400"><svg class="animate-spin h-8 w-8 text-cyan-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg></div>
+        } @else if (errorMessage()) {
+          <div class="p-4"><div class="text-left text-red-400 bg-red-900/40 p-4 rounded-md border border-red-700/50 max-w-full w-full self-start"><h3 class="font-bold text-md mb-2 text-red-300">Render Error</h3><p class="font-mono text-xs whitespace-pre-wrap">{{ errorMessage() }}</p></div></div>
+        } @else {
+          <div class="w-full h-full transition-transform duration-75" [class.cursor-grab]="!isPanning()" [class.cursor-grabbing]="isPanning()" [style.transform]="previewTransform()">
+             <div id="mermaid-preview-container" class="w-full h-full flex items-center justify-center p-4" [innerHTML]="renderedSvg()"></div>
+          </div>
+        }
+      </div>
+    </div>
+  </div>
+
+  <!-- AI Modal -->
+  @if (aiModalMode() !== null) {
+    <div class="fixed inset-0 bg-black/70 z-40 flex items-center justify-center p-4" (click)="closeAiModal()">
+      <div class="bg-gray-800 rounded-lg shadow-2xl w-full max-w-2xl border border-gray-700" (click)="$event.stopPropagation()">
+        @switch (aiModalMode()) {
+          @case ('generate') {
+            <div class="p-6">
+              <h2 class="text-xl font-bold mb-4">Generate Diagram with AI</h2>
+              <p class="text-sm text-gray-400 mb-4">Describe the diagram you want to create. For example: "A sequence diagram showing a user logging into a website."</p>
+              <textarea class="w-full h-28 p-2 bg-gray-900 border border-gray-600 rounded-md text-gray-200 focus:ring-cyan-500 focus:border-cyan-500" placeholder="Enter your description here..." (input)="aiPrompt.set($any($event.target).value)" [value]="aiPrompt()"></textarea>
+              <div class="mt-4 flex justify-end"><button (click)="generateDiagramWithAi()" class="bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-2 px-4 rounded-md flex items-center gap-2 disabled:opacity-50" [disabled]="isAiLoading() || !aiPrompt().trim()"> @if (isAiLoading()) { <svg class="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg> <span>Generating...</span> } @else { <span>Generate</span> } </button></div>
             </div>
           }
-
-        </div>
+          @case ('explain') {
+            <div class="p-6">
+              <h2 class="text-xl font-bold mb-4">AI Code Explanation</h2>
+              @if (isAiLoading()) {
+                <div class="flex items-center justify-center text-gray-400 p-8"><svg class="animate-spin h-6 w-6 text-cyan-400 mr-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg><span>Analyzing code...</span></div>
+              } @else {
+                <div class="prose prose-sm prose-invert max-w-none prose-p:text-gray-300 prose-headings:text-white max-h-[60vh] overflow-y-auto" [innerHTML]="sanitizer.bypassSecurityTrustHtml(aiExplanation())"></div>
+              }
+            </div>
+          }
+          @case ('refine') {
+             <div class="p-6">
+              <h2 class="text-xl font-bold mb-4">Refine Diagram with AI</h2>
+              <p class="text-sm text-gray-400 mb-4">Describe the changes you want to make to the current diagram. For example: "Add a database check after the user logs in."</p>
+              <textarea class="w-full h-28 p-2 bg-gray-900 border border-gray-600 rounded-md text-gray-200 focus:ring-cyan-500 focus:border-cyan-500" placeholder="Enter your refinement instructions here..." (input)="aiRefinePrompt.set($any($event.target).value)" [value]="aiRefinePrompt()"></textarea>
+              <div class="mt-4 flex justify-end"><button (click)="refineCodeWithAi()" class="bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-2 px-4 rounded-md flex items-center gap-2 disabled:opacity-50" [disabled]="isAiLoading() || !aiRefinePrompt().trim()"> @if (isAiLoading()) { <svg class="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg> <span>Refining...</span> } @else { <span>Refine</span> } </button></div>
+            </div>
+          }
+        }
       </div>
-
     </div>
-    
-    <footer class="text-center mt-12 text-gray-500">
-      <p>Powered by Angular, Tailwind CSS, and MermaidJS.</p>
-    </footer>
+  }
 
-  </div>
+  <!-- Command Palette Modal -->
+  @if (isCommandPaletteOpen()) {
+    <div class="fixed inset-0 bg-black/70 z-50 flex justify-center pt-24" (click)="closeCommandPalette()">
+      <div class="bg-gray-800 rounded-lg shadow-2xl w-full max-w-xl border border-gray-700 h-96 flex flex-col" (click)="$event.stopPropagation()">
+        <div class="p-3 border-b border-gray-700">
+           <input
+              #commandInput
+              type="text"
+              class="w-full p-2 bg-gray-900 border border-gray-600 rounded-md text-gray-200 focus:ring-cyan-500 focus:border-cyan-500"
+              placeholder="Type a command..."
+              (input)="commandSearchQuery.set($any($event.target).value)"
+              [value]="commandSearchQuery()"
+            />
+        </div>
+        <ul class="flex-grow overflow-y-auto p-2">
+          @for (command of filteredCommands(); track command.id) {
+            <li 
+              class="flex items-center gap-3 p-2 rounded-md hover:bg-cyan-600/50 cursor-pointer"
+              (click)="executeCommand(command)"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-gray-400" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" [attr.d]="command.icon" clip-rule="evenodd" /></svg>
+              <span>{{ command.name }}</span>
+            </li>
+          } @empty {
+            <li class="p-4 text-center text-gray-500">No commands found.</li>
+          }
+        </ul>
+      </div>
+    </div>
+  }
 </main>

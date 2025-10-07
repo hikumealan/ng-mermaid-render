@@ -1,5 +1,5 @@
 {
-  "name": "MermaidJS Diagram Previewer",
-  "description": "An Angular application that uses MermaidJS to render diagram code into a live SVG chart preview. Type your Mermaid syntax in the editor to see the diagram update in real-time.",
+  "name": "MermaidJS AI Diagram Studio",
+  "description": "An AI-powered, fully-functional Angular application for creating and visualizing MermaidJS diagrams. Features a professional Monaco editor with a minimap and syntax highlighting, Google Gemini AI for generating, explaining, refining, and fixing code, interactive diagram-to-code linking, a command palette, export to SVG/PNG, theme selection, and resizable panes.",
   "requestFramePermissions": []
 }

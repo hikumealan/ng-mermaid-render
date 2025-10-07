@@ -1,16 +1,24 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-t" />
-  <title>MermaidJS Diagram Previewer</title>
+  <title>MermaidJS AI Diagram Studio</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <link rel="icon" type="image/x-icon" href="favicon.ico" />
   <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- MermaidJS -->
   <script type="module">
     import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
     window.mermaid = mermaid;
   </script>
+
+  <!-- Monaco Editor -->
+  <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs/loader.js"></script>
+
+  <!-- Google Gemini API -->
+  <script src="https://cdn.jsdelivr.net/npm/@google/generative-ai@0.15.0/dist/index.min.js"></script>
+
 <script type="importmap">
 {
   "imports": {
@@ -27,7 +35,7 @@
 }
 </script>
 </head>
-<body class="bg-gray-900">
+<body class="bg-gray-900 overflow-hidden">
   <app-root></app-root>
 </body>
 </html>
