@@ -1,101 +1,61 @@
-import { Component, ChangeDetectionStrategy, signal, effect, inject, OnInit, computed, ViewChild, ElementRef, AfterViewInit, HostListener } from '@angular/core';
-import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
+import { Component, ChangeDetectionStrategy, signal, effect, inject, OnInit, computed, ViewChild, ElementRef, AfterViewInit } from '@angular/core';
+import { SafeHtml } from '@angular/platform-browser';
 
-// This tells TypeScript that these objects exist on the global scope
-declare const mermaid: any;
-declare const monaco: any;
-declare const genai: any; // From @google/generative-ai CDN script
+import { Command, CommandService } from './command.service';
+import { ExportService } from './export.service';
+import { GeminiAiService } from './gemini-ai.service';
+import { MermaidService, MermaidValidationError } from './mermaid.service';
+import { MonacoService } from './monaco.service';
+import { CollaborationService } from './collaboration.service';
+import { ScriptLoaderService } from './script-loader.service';
+import { HistoryEntry, HistoryService } from './history.service';
 
-const STORAGE_KEY = 'mermaid-editor-code';
-
-const DIAGRAM_EXAMPLES = [
-    {
-        name: 'Flow Chart',
-        code: `graph TD
-    A[Start] --> B{Is it a good idea?};
-    B -- Yes --> C[Do it!];
-    C --> D[End];
-    B -- No --> E[Think again];
-    E --> B;`
-    },
-    {
-        name: 'Sequence Diagram',
-        code: `sequenceDiagram
-    participant Alice
-    participant Bob
-    Alice->>Bob: Hello Bob, how are you?
-    Bob-->>Alice: I am good thanks!
-    Alice-)Bob: Great to hear.`
-    },
-    {
-        name: 'Pie Chart',
-        code: `pie
-    title Key Technologies
-    "Angular" : 45
-    "Tailwind CSS" : 25
-    "MermaidJS" : 15
-    "TypeScript" : 15`
-    },
-    {
-        name: 'Gantt Chart',
-        code: `gantt
-    title A Gantt Diagram
-    dateFormat  YYYY-MM-DD
-    section Section
-    A task           :a1, 2024-01-01, 30d
-    Another task     :after a1  , 20d
-    section Another
-    Task in sec      :2024-01-12  , 12d
-    another task      : 24d`
-    }
-];
-
-interface Command {
-  id: string;
-  name: string;
-  action: () => void;
-  icon: string;
-}
+const PUBNUB_SDK_URL = 'https://cdn.pubnub.com/sdk/javascript/pubnub.7.2.2.min.js';
 
 @Component({
   selector: 'app-root',
   templateUrl: './app.component.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
+  providers: [CommandService, ExportService, GeminiAiService, MermaidService, MonacoService, CollaborationService, ScriptLoaderService, HistoryService],
   host: {
-    '(document:mousemove)': 'onResize($event)',
-    '(document:mouseup)': 'stopResize()',
-    '(document:mouseleave)': 'stopResize()',
+    '(document:mousemove)': 'onDocumentMouseMove($event)',
+    '(document:mouseup)': 'stopDragActions()',
+    '(document:mouseleave)': 'stopDragActions()',
+    '(window:keydown)': 'handleKeyboardEvents($event)',
   },
 })
 export class AppComponent implements OnInit, AfterViewInit {
-  private readonly sanitizer = inject(DomSanitizer);
-  private debounceTimer: any;
-  private editorInstance: any;
-  private ai: any;
+  // --- Service Injections ---
+  private readonly commandService = inject(CommandService);
+  private readonly exportService = inject(ExportService);
+  private readonly geminiService = inject(GeminiAiService);
+  private readonly mermaidService = inject(MermaidService);
+  private readonly monacoService = inject(MonacoService);
+  private readonly collaborationService = inject(CollaborationService);
+  private readonly scriptLoaderService = inject(ScriptLoaderService);
+  private readonly historyService = inject(HistoryService);
 
-  // --- Diagram Examples ---
-  readonly diagramExamples = DIAGRAM_EXAMPLES;
+  private debounceTimer: any;
+  private publishDebounceTimer: any;
+  private isRemoteUpdate = false;
 
   // --- Element References ---
   @ViewChild('editorContainer') editorContainerEl!: ElementRef<HTMLDivElement>;
-
-  // --- State Signals ---
-  mermaidCode = signal<string>(DIAGRAM_EXAMPLES[0].code);
-  renderedSvg = signal<SafeHtml>('');
-  errorMessage = signal<string>('');
-  isLoading = signal<boolean>(false);
-
-  // --- Editor State ---
-  canUndo = signal(false);
-  canRedo = signal(false);
+  @ViewChild('previewContainer') previewContainerEl!: ElementRef<HTMLDivElement>;
   
+  // --- State Signals ---
+  mermaidCode = signal<string>('');
+  renderedSvg = signal<SafeHtml>('');
+  error = signal<MermaidValidationError | null>(null);
+  isLoading = signal<boolean>(true);
+
   // --- Theme State ---
   readonly mermaidThemes = ['dark', 'default', 'neutral', 'forest'];
   mermaidTheme = signal<string>('dark');
   
   // --- Resizable Panes State ---
   isResizing = signal(false);
-  editorWidth = signal(50); // Initial width in percentage
+  editorWidth = signal(50);
   
   // --- Zoom/Pan State ---
   zoomLevel = signal(1);
@@ -114,169 +74,135 @@ export class AppComponent implements OnInit, AfterViewInit {
   isCommandPaletteOpen = signal(false);
   commandSearchQuery = signal('');
 
+  // --- History State ---
+  isHistoryViewerOpen = signal(false);
+  historyVersions = signal<HistoryEntry[]>([]);
+
+  // --- Collaboration State ---
+  shareLinkCopied = signal(false);
+
+  // --- Public Properties from Services ---
+  readonly diagramExamples = this.commandService.diagramExamples;
+  readonly commands = this.commandService.getCommands(this);
+  readonly canUndo = this.monacoService.canUndo;
+  readonly canRedo = this.monacoService.canRedo;
+  readonly connectedUsers = this.collaborationService.users;
+
   // --- Computed Signals ---
   previewTransform = computed(() => `scale(${this.zoomLevel()}) translate(${this.panOffset().x}px, ${this.panOffset().y}px)`);
-
-  // --- Commands ---
-  readonly commands: Command[] = [
-    { id: 'ai.generate', name: 'Generate with AI...', action: () => this.openAiModal('generate'), icon: 'M5 2a1 1 0 00-1 1v1.586l-2.293 2.293a1 1 0 000 1.414l2.293 2.293V13a1 1 0 102 0v-1.586l2.293-2.293a1 1 0 000-1.414L6 5.414V4a1 1 0 00-1-1zm10 0a1 1 0 00-1 1v1.586l-2.293 2.293a1 1 0 000 1.414l2.293 2.293V13a1 1 0 102 0v-1.586l2.293-2.293a1 1 0 000-1.414L16 5.414V4a1 1 0 00-1-1zm-3.828 7.379a1 1 0 00-1.414 0L8.05 11.086a1 1 0 000 1.414l1.707 1.707a1 1 0 001.414-1.414L9.464 11.793l1.707-1.707a1 1 0 000-1.414z' },
-    { id: 'ai.refine', name: 'Refine with AI...', action: () => this.openAiModal('refine'), icon: 'M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z' },
-    { id: 'ai.explain', name: 'Explain Code', action: () => this.openAiModal('explain'), icon: 'M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z' },
-    { id: 'ai.fix', name: 'Fix Code with AI', action: () => this.fixCodeWithAi(), icon: 'M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z' },
-    { id: 'editor.format', name: 'Format Code', action: () => this.formatCode(), icon: 'M17.414 2.586a2 2 0 00-2.828 0L7 10.172V13h2.828l7.586-7.586a2 2 0 000-2.828z' },
-    { id: 'file.export.svg', name: 'Export as SVG', action: () => this.exportSvg(), icon: 'M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4' },
-    { id: 'file.export.png', name: 'Export as PNG', action: () => this.exportPng(), icon: 'M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4' },
-    { id: 'view.reset', name: 'Reset View', action: () => this.resetZoom(), icon: 'M4 2a2 2 0 00-2 2v12a2 2 0 002 2h12a2 2 0 002-2V4a2 2 0 00-2-2H4zm10.5 10.5a1 1 0 000-1.414L13.414 10l1.086-1.086a1 1 0 00-1.414-1.414L12 8.586l-1.086-1.086a1 1 0 00-1.414 1.414L10.586 10l-1.086 1.086a1 1 0 001.414 1.414L12 11.414l1.086 1.086a1 1 0 001.414 0z' }
-  ];
-
+  
   filteredCommands = computed(() => {
     const query = this.commandSearchQuery().toLowerCase().trim();
     if (!query) return this.commands;
     return this.commands.filter(cmd => cmd.name.toLowerCase().includes(query));
   });
 
+  isLive = computed(() => this.connectedUsers().length > 1);
+
   constructor() {
+    // Main effect to react to code changes from this component to render SVG
     effect(() => {
       const code = this.mermaidCode();
       this.isLoading.set(true);
       clearTimeout(this.debounceTimer);
       
       this.debounceTimer = setTimeout(async () => {
-        localStorage.setItem(STORAGE_KEY, code);
-        const isValid = await this.validateCode(code);
+        this.historyService.addVersion(code); // Save version to history
+        const { isValid, error } = await this.mermaidService.validate(code);
         if (isValid) {
-          await this.renderDiagram(code);
+          this.error.set(null);
+          const svg = await this.mermaidService.render('mermaid-preview', code);
+          this.renderedSvg.set(svg);
         } else {
+          this.error.set(error);
           this.renderedSvg.set('');
-          this.isLoading.set(false);
         }
+        this.isLoading.set(false);
       }, 300);
+    });
+
+    // Effect to react to code changes from the Monaco editor service
+    effect(() => {
+        const editorCode = this.monacoService.code();
+        if(this.mermaidCode() !== editorCode) {
+            this.mermaidCode.set(editorCode);
+        }
+    });
+
+    // Effect to publish local code changes for collaboration
+    effect(() => {
+      const code = this.monacoService.code();
+
+      // This flag prevents re-broadcasting changes that came from a remote user
+      if (this.isRemoteUpdate) {
+        this.isRemoteUpdate = false;
+        return;
+      }
+
+      clearTimeout(this.publishDebounceTimer);
+      this.publishDebounceTimer = setTimeout(() => {
+        this.collaborationService.publishCode(code);
+      }, 500);
+    });
+
+    // Effect to visually highlight errors in the editor
+    effect(() => {
+      const currentError = this.error();
+      this.monacoService.setErrorLine(currentError?.lineNumber ?? null);
     });
   }
 
   ngOnInit() {
-    this.loadCodeFromStorage();
-    this.initializeMermaid();
-    if (typeof genai !== 'undefined' && process.env.API_KEY) {
-      this.ai = new genai.GoogleGenAI({ apiKey: process.env.API_KEY });
-    } else {
-      console.warn('Gemini API key not found or AI library not loaded. AI features will be disabled.');
-    }
-
-    (window as any).highlightLineInEditor = (lineNumber: number) => this.highlightEditorLine(lineNumber);
+    const savedCode = this.historyService.getLatestVersion()?.code || this.diagramExamples[0].code;
+    this.mermaidCode.set(savedCode);
+    this.mermaidService.initialize(this.mermaidTheme, () => this.monacoService.highlightLine.bind(this.monacoService));
+    this.geminiService.initialize();
+    this.initializeCollaboration();
   }
   
   async ngAfterViewInit() {
-    await this.initializeMonacoEditor();
+    await this.monacoService.initializeEditor(this.editorContainerEl.nativeElement, this.mermaidCode());
   }
 
-  @HostListener('window:keydown', ['$event'])
+  private async initializeCollaboration() {
+    try {
+      await this.scriptLoaderService.loadScript(PUBNUB_SDK_URL, 'PubNub');
+      
+      // Now that the script is loaded, PubNub is guaranteed to be available.
+      let session = window.location.hash.substring(1);
+      if (!session) {
+        session = `session-${Math.random().toString(36).substr(2, 9)}`;
+        window.location.hash = session;
+      }
+      
+      const remoteUpdateCallback = (code: string) => {
+        this.isRemoteUpdate = true;
+        this.monacoService.setValue(code);
+      };
+
+      this.collaborationService.initialize(session, remoteUpdateCallback);
+
+    } catch (error) {
+      console.error('Failed to load PubNub SDK. Collaboration features will be disabled.', error);
+    }
+  }
+
   handleKeyboardEvents(event: KeyboardEvent) {
     if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key === 'P') {
       event.preventDefault();
       this.toggleCommandPalette();
     }
-    if (event.key === 'Escape' && this.isCommandPaletteOpen()) {
-      this.closeCommandPalette();
+    if (event.key === 'Escape') {
+      if (this.isCommandPaletteOpen()) this.closeCommandPalette();
+      if (this.isHistoryViewerOpen()) this.closeHistoryViewer();
     }
-  }
-
-  private loadCodeFromStorage() {
-    const savedCode = localStorage.getItem(STORAGE_KEY);
-    if (savedCode) {
-      this.mermaidCode.set(savedCode);
-    }
-  }
-
-  private initializeMermaid() {
-     if (typeof mermaid !== 'undefined') {
-        try {
-            mermaid.initialize({
-                startOnLoad: false,
-                theme: this.mermaidTheme(),
-                securityLevel: 'loose',
-                fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace'
-            });
-        } catch(e) {
-            this.errorMessage.set('Failed to initialize Mermaid.js.');
-        }
-     } else {
-        this.errorMessage.set('Mermaid.js library not loaded.');
-     }
-  }
-
-  private async initializeMonacoEditor() {
-    if (typeof (window as any).require === 'undefined') {
-      console.error('Monaco loader not found.');
-      return;
-    }
-
-    (window as any).require.config({ paths: { 'vs': 'https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs' }});
-    (window as any).require(['vs/editor/editor.main'], () => {
-      monaco.languages.register({ id: 'mermaid' });
-      monaco.languages.setMonarchTokensProvider('mermaid', {
-        tokenizer: {
-          root: [
-            [/^\s*(graph|sequenceDiagram|gantt|classDiagram|stateDiagram|pie|erDiagram|journey|requirementDiagram)/, "keyword"],
-            [/[A-Z][a-zA-Z0-9_]*/, "type.identifier"],
-            [/-->|-->>|->>|->/, "operator"],
-            [/[:]/, "operator"],
-            [/".*?"/, "string"],
-            [/\[.*?\]/, "string.special"],
-            [/\(.*?\)|\{.*?\}/, "string.special"],
-          ]
-        }
-      });
-
-      this.editorInstance = monaco.editor.create(this.editorContainerEl.nativeElement, {
-        value: this.mermaidCode(),
-        language: 'mermaid',
-        theme: 'vs-dark',
-        automaticLayout: true,
-        minimap: { enabled: true },
-        wordWrap: 'on',
-      });
-
-      this.editorInstance.getModel().onDidChangeContent(() => {
-        const value = this.editorInstance.getValue();
-        this.mermaidCode.set(value);
-        this.updateUndoRedoState();
-      });
-
-      this.updateUndoRedoState();
-    });
-  }
-
-  private updateUndoRedoState() {
-      if (!this.editorInstance) return;
-      const model = this.editorInstance.getModel();
-      this.canUndo.set(model.canUndo());
-      this.canRedo.set(model.canRedo());
-  }
-
-  highlightEditorLine(lineNumber: number) {
-    if (!this.editorInstance) return;
-    this.editorInstance.revealLineInCenter(lineNumber, monaco.editor.ScrollType.Smooth);
-    this.editorInstance.setPosition({ lineNumber: lineNumber, column: 1 });
-    // This adds a temporary highlight decoration to the line
-    const decorations = this.editorInstance.createDecorationsCollection([
-        {
-            range: new monaco.Range(lineNumber, 1, lineNumber, 1),
-            options: {
-                isWholeLine: true,
-                className: 'editor-line-highlight',
-            },
-        },
-    ]);
-    setTimeout(() => decorations.clear(), 1000); // Remove highlight after 1s
-    this.editorInstance.focus();
   }
 
   loadExample(event: Event) {
     const selectElement = event.target as HTMLSelectElement;
     const newCode = selectElement.value;
     if (newCode) {
-      this.editorInstance?.setValue(newCode);
+      this.monacoService.setValue(newCode);
       selectElement.selectedIndex = 0;
     }
   }
@@ -284,31 +210,23 @@ export class AppComponent implements OnInit, AfterViewInit {
   changeTheme(event: Event) {
     const theme = (event.target as HTMLSelectElement).value;
     this.mermaidTheme.set(theme);
-    this.initializeMermaid(); 
-    this.renderDiagram(this.mermaidCode());
+    // Re-render with the new theme
+    this.mermaidCode.update(c => c);
+  }
+
+  shareSession() {
+    navigator.clipboard.writeText(window.location.href);
+    this.shareLinkCopied.set(true);
+    setTimeout(() => this.shareLinkCopied.set(false), 2000);
   }
 
   // --- Editor Actions ---
-  undo() { this.editorInstance?.trigger('toolbar', 'undo', null); }
-  redo() { this.editorInstance?.trigger('toolbar', 'redo', null); }
-  formatCode() { this.editorInstance?.getAction('editor.action.formatDocument').run(); }
+  undo() { this.monacoService.undo(); }
+  redo() { this.monacoService.redo(); }
+  formatCode() { this.monacoService.formatCode(); }
 
-  // --- Pane Resizing ---
+  // --- Pane Resizing & Panning (Consolidated Event Handlers) ---
   startResize(event: MouseEvent) { event.preventDefault(); this.isResizing.set(true); }
-  onResize(event: MouseEvent) {
-    if (!this.isResizing()) return;
-    const percentage = (event.clientX / window.innerWidth) * 100;
-    if (percentage > 20 && percentage < 80) {
-      this.editorWidth.set(percentage);
-    }
-  }
-  stopResize() { this.isResizing.set(false); }
-
-  // --- Zoom & Pan ---
-  zoomIn() { this.zoomLevel.update(z => Math.min(z * 1.2, 5)); }
-  zoomOut() { this.zoomLevel.update(z => Math.max(z / 1.2, 0.2)); }
-  resetZoom() { this.zoomLevel.set(1); this.panOffset.set({ x: 0, y: 0 }); }
-  
   startPan(event: MouseEvent) {
     event.preventDefault();
     this.isPanning.set(true);
@@ -316,50 +234,40 @@ export class AppComponent implements OnInit, AfterViewInit {
     this.panStart.y = event.clientY - this.panOffset().y * this.zoomLevel();
   }
 
-  @HostListener('document:mousemove', ['$event']) onPan(event: MouseEvent) {
+  onDocumentMouseMove(event: MouseEvent) {
+    // Dispatch to the correct handler based on state
+    this.onResize(event);
+    this.onPan(event);
+  }
+
+  stopDragActions() {
+    this.isResizing.set(false);
+    this.isPanning.set(false);
+  }
+  
+  private onResize(event: MouseEvent) {
+    if (!this.isResizing()) return;
+    const percentage = (event.clientX / window.innerWidth) * 100;
+    if (percentage > 20 && percentage < 80) {
+      this.editorWidth.set(percentage);
+    }
+  }
+
+  private onPan(event: MouseEvent) {
     if (!this.isPanning()) return;
     const dx = event.clientX - this.panStart.x;
     const dy = event.clientY - this.panStart.y;
     this.panOffset.set({ x: dx / this.zoomLevel(), y: dy / this.zoomLevel() });
   }
 
-  @HostListener('document:mouseup') stopPan() { this.isPanning.set(false); }
+  // --- Zoom ---
+  zoomIn() { this.zoomLevel.update(z => Math.min(z * 1.2, 5)); }
+  zoomOut() { this.zoomLevel.update(z => Math.max(z / 1.2, 0.2)); }
+  resetZoom() { this.zoomLevel.set(1); this.panOffset.set({ x: 0, y: 0 }); }
 
   // --- Export ---
-  exportSvg() {
-    const rawSvg = document.querySelector('#mermaid-preview-container > svg')?.outerHTML;
-    if (!rawSvg) return;
-    const blob = new Blob([rawSvg], { type: 'image/svg+xml;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = 'diagram.svg';
-    link.click();
-    URL.revokeObjectURL(url);
-  }
-
-  exportPng() {
-    const rawSvg = document.querySelector('#mermaid-preview-container > svg')?.outerHTML;
-    if (!rawSvg) return;
-
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d');
-    const img = new Image();
-    
-    img.onload = () => {
-      canvas.width = img.width * 2; // Render at 2x for better quality
-      canvas.height = img.height * 2;
-      ctx?.scale(2,2);
-      ctx?.drawImage(img, 0, 0);
-      const url = canvas.toDataURL('image/png');
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = 'diagram.png';
-      link.click();
-    };
-    img.onerror = (e) => console.error("Failed to load SVG for PNG export", e);
-    img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(rawSvg)));
-  }
+  exportSvg() { this.exportService.exportSvg(this.previewContainerEl.nativeElement); }
+  exportPng() { this.exportService.exportPng(this.previewContainerEl.nativeElement); }
 
   // --- AI Features ---
   openAiModal(mode: 'generate' | 'explain' | 'refine') {
@@ -371,87 +279,57 @@ export class AppComponent implements OnInit, AfterViewInit {
   }
   closeAiModal() { this.aiModalMode.set(null); }
 
-  async generateDiagramWithAi() {
-    if (!this.ai || !this.aiPrompt().trim()) return;
+  async handleAiAction(action: Promise<string | null>, successCallback: (result: string) => void) {
     this.isAiLoading.set(true);
-    const systemInstruction = "You are an expert in MermaidJS. The user will provide a description, and you must return only the Mermaid code block that represents that description. Do not include any explanation or markdown formatting like ```mermaid ... ```.";
     try {
-      const response = await this.ai.models.generateContent({
-          model: 'gemini-2.5-flash',
-          contents: this.aiPrompt(),
-          config: { systemInstruction }
-      });
-      this.editorInstance?.setValue(response.text.trim());
-      this.closeAiModal();
+      const result = await action;
+      if (result) {
+        successCallback(result);
+      }
     } catch (e) {
+      this.aiExplanation.set(`An error occurred. Please check the console.`);
       console.error(e);
-      this.aiExplanation.set('An error occurred while generating the diagram.');
     } finally {
       this.isAiLoading.set(false);
     }
   }
 
-  async explainCodeWithAi() {
-    if (!this.ai || !this.mermaidCode().trim()) {
-      this.aiExplanation.set('There is no code to explain.');
-      return;
-    }
-    this.isAiLoading.set(true);
-    const systemInstruction = "You are an expert in MermaidJS. The user will provide a piece of Mermaid code. Explain what the diagram represents in a clear, concise way, using markdown for formatting if needed.";
-    try {
-      const response = await this.ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: this.mermaidCode(),
-        config: { systemInstruction }
-      });
-      this.aiExplanation.set(response.text);
-    } catch (e) {
-      console.error(e);
-      this.aiExplanation.set('An error occurred while explaining the code.');
-    } finally {
-      this.isAiLoading.set(false);
-    }
+  generateDiagramWithAi() {
+    this.handleAiAction(
+      this.geminiService.generateDiagram(this.aiPrompt()),
+      (newCode) => {
+        this.monacoService.setValue(newCode);
+        this.closeAiModal();
+      }
+    );
+  }
+  
+  explainCodeWithAi() {
+    this.handleAiAction(
+      this.geminiService.explainCode(this.mermaidCode()),
+      (explanation) => this.aiExplanation.set(explanation)
+    );
   }
 
-  async fixCodeWithAi() {
-    if (!this.ai || !this.errorMessage()) return;
-    this.isLoading.set(true); 
-    const prompt = `The following MermaidJS code has an error.\n\nCODE:\n\`\`\`mermaid\n${this.mermaidCode()}\n\`\`\`\n\nERROR:\n${this.errorMessage()}\n\nPlease fix the code.`;
-    const systemInstruction = "You are an expert in MermaidJS. The user will provide a piece of Mermaid code that has an error, along with the error message. Your task is to fix the code. Return only the corrected Mermaid code block, without any explanation or markdown formatting.";
-    try {
-      const response = await this.ai.models.generateContent({
-          model: 'gemini-2.5-flash',
-          contents: prompt,
-          config: { systemInstruction }
-      });
-      this.editorInstance?.setValue(response.text.trim());
-    } catch(e) {
-      console.error(e);
-      this.errorMessage.set('AI fix failed. Please try again.');
-    } finally {
-      this.isLoading.set(false);
-    }
+  fixCodeWithAi() {
+    const currentError = this.error();
+    if (!currentError) return;
+
+    this.isLoading.set(true); // Show editor loading spinner
+    this.handleAiAction(
+      this.geminiService.fixCode(this.mermaidCode(), currentError.message),
+      (fixedCode) => this.monacoService.setValue(fixedCode)
+    ).finally(() => this.isLoading.set(false));
   }
 
-  async refineCodeWithAi() {
-    if (!this.ai || !this.aiRefinePrompt().trim()) return;
-    this.isAiLoading.set(true);
-    const prompt = `Here is a MermaidJS diagram. Please apply the following change: "${this.aiRefinePrompt()}".\n\nCODE:\n\`\`\`mermaid\n${this.mermaidCode()}\n\`\`\``;
-    const systemInstruction = "You are an expert in MermaidJS. The user will provide a diagram and a requested change. Your task is to update the code to reflect the change. Return only the complete, corrected Mermaid code block, without any explanation or markdown formatting.";
-     try {
-      const response = await this.ai.models.generateContent({
-          model: 'gemini-2.5-flash',
-          contents: prompt,
-          config: { systemInstruction }
-      });
-      this.editorInstance?.setValue(response.text.trim());
-      this.closeAiModal();
-    } catch(e) {
-      console.error(e);
-      this.aiExplanation.set('An error occurred while refining the diagram.');
-    } finally {
-      this.isAiLoading.set(false);
-    }
+  refineCodeWithAi() {
+    this.handleAiAction(
+      this.geminiService.refineCode(this.mermaidCode(), this.aiRefinePrompt()),
+      (refinedCode) => {
+        this.monacoService.setValue(refinedCode);
+        this.closeAiModal();
+      }
+    );
   }
 
   // --- Command Palette ---
@@ -463,69 +341,35 @@ export class AppComponent implements OnInit, AfterViewInit {
     this.closeCommandPalette();
   }
 
-  // --- Rendering & Validation ---
-  private addClickCallbacks(code: string): string {
-    const lines = code.split('\n');
-    const nodeMap = new Map<string, number>();
-    const nodeRegex = /^\s*([a-zA-Z0-9_]+)(?:\[.*\]|\(.*\)|>.*\]|\{.*\}|)?\s*$/;
-    const participantRegex = /^\s*(?:participant|actor)\s+([a-zA-Z0-9_]+)/;
+  // --- History ---
+  openHistoryViewer() {
+    this.historyVersions.set(this.historyService.getHistory());
+    this.isHistoryViewerOpen.set(true);
+  }
+  closeHistoryViewer() {
+    this.isHistoryViewerOpen.set(false);
+  }
+  restoreVersion(entry: HistoryEntry) {
+    this.monacoService.setValue(entry.code);
+    this.closeHistoryViewer();
+    this.monacoService.focus();
+  }
+
+  formatTimestamp(timestamp: number): string {
+    const now = Date.now();
+    const seconds = Math.floor((now - timestamp) / 1000);
     
-    lines.forEach((line, index) => {
-      const nodeMatch = line.match(nodeRegex);
-      const participantMatch = line.match(participantRegex);
-      const id = nodeMatch?.[1] || participantMatch?.[1];
-      if (id && !nodeMap.has(id)) {
-        nodeMap.set(id, index + 1); // Line numbers are 1-based
-      }
-    });
+    if (seconds < 60) return `${seconds} second${seconds === 1 ? '' : 's'} ago`;
+    
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${minutes} minute${minutes === 1 ? '' : 's'} ago`;
+    
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
 
-    let callbacks = '';
-    for (const [id, lineNumber] of nodeMap.entries()) {
-      callbacks += `\nclick ${id} call highlightLineInEditor(${lineNumber})`;
-    }
-    return code + callbacks;
-  }
+    const days = Math.floor(hours / 24);
+    if (days < 7) return `${days} day${days === 1 ? '' : 's'} ago`;
 
-  private async validateCode(code: string): Promise<boolean> {
-    if (!code.trim()) {
-      this.errorMessage.set('');
-      return true;
-    }
-    if (typeof mermaid === 'undefined') {
-      this.errorMessage.set('Mermaid.js library not loaded.');
-      return false;
-    }
-    try {
-      // We parse the original code, not the one with callbacks
-      await mermaid.parse(code);
-      this.errorMessage.set('');
-      return true;
-    } catch (e: any) {
-      this.parseAndSetError(e.message || String(e));
-      return false;
-    }
-  }
-
-  private async renderDiagram(code: string) {
-    if (!code.trim()) {
-      this.renderedSvg.set('');
-      this.isLoading.set(false);
-      return;
-    }
-    try {
-      const interactiveCode = this.addClickCallbacks(code);
-      const { svg } = await mermaid.render('mermaid-preview', interactiveCode);
-      this.renderedSvg.set(this.sanitizer.bypassSecurityTrustHtml(svg));
-    } catch (e: any) {
-      this.renderedSvg.set(''); 
-      this.parseAndSetError(e.message || String(e));
-    } finally {
-      this.isLoading.set(false);
-    }
-  }
-  
-  private parseAndSetError(errorMessage: string): void {
-      const friendlyError = errorMessage.replace(/Parse error on line \d+:/, '').trim();
-      this.errorMessage.set(friendlyError);
+    return new Date(timestamp).toLocaleString();
   }
 }
