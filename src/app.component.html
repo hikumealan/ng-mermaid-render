@@ -1,0 +1,60 @@
+
+<main class="min-h-screen bg-gray-900 text-gray-200 font-sans p-4 sm:p-6 md:p-8">
+  <div class="max-w-7xl mx-auto">
+    
+    <header class="text-center mb-8">
+      <h1 class="text-4xl sm:text-5xl font-bold text-white mb-2">MermaidJS Diagram Previewer</h1>
+      <p class="text-lg text-cyan-400">Instantly visualize your Mermaid diagrams with this live editor.</p>
+    </header>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+      
+      <!-- Editor Column -->
+      <div class="flex flex-col">
+        <label for="mermaid-editor" class="text-xl font-semibold mb-3 text-white">Diagram Code</label>
+        <div class="flex-grow rounded-lg shadow-2xl bg-gray-800 border border-gray-700 overflow-hidden">
+          <textarea 
+            id="mermaid-editor"
+            class="w-full h-full min-h-[400px] lg:min-h-[600px] p-4 bg-transparent text-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500 resize-none font-mono text-sm leading-relaxed"
+            [value]="mermaidCode()"
+            (input)="updateCode($event)"
+            placeholder="Enter your Mermaid diagram code here... e.g., graph TD; A-->B;"
+            spellcheck="false"
+          ></textarea>
+        </div>
+      </div>
+      
+      <!-- Preview Column -->
+      <div class="flex flex-col">
+        <h2 class="text-xl font-semibold mb-3 text-white">Live Preview</h2>
+        <div class="flex-grow flex items-center justify-center p-4 rounded-lg shadow-2xl bg-gray-800 border border-gray-700 min-h-[400px] lg:min-h-[600px] overflow-auto">
+          
+          @if (isLoading()) {
+            <div class="flex flex-col items-center justify-center text-gray-400">
+              <svg class="animate-spin h-8 w-8 text-cyan-400 mb-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              <span>Rendering Diagram...</span>
+            </div>
+          } @else if (errorMessage()) {
+            <div class="text-center text-red-400 bg-red-900/40 p-6 rounded-lg border border-red-700/50 max-w-md">
+              <h3 class="font-bold text-lg mb-2 text-red-300">Render Error</h3>
+              <p class="font-mono text-sm text-left whitespace-pre-wrap">{{ errorMessage() }}</p>
+            </div>
+          } @else {
+            <div class="w-full h-full flex items-center justify-center p-2" [innerHTML]="renderedSvg()">
+            </div>
+          }
+
+        </div>
+      </div>
+
+    </div>
+    
+    <footer class="text-center mt-12 text-gray-500">
+      <p>Powered by Angular, Tailwind CSS, and MermaidJS.</p>
+    </footer>
+
+  </div>
+</main>

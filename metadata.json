@@ -1,0 +1,5 @@
+{
+  "name": "MermaidJS Diagram Previewer",
+  "description": "An Angular application that uses MermaidJS to render diagram code into a live SVG chart preview. Type your Mermaid syntax in the editor to see the diagram update in real-time.",
+  "requestFramePermissions": []
+}
